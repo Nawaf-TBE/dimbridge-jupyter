@@ -1,96 +1,58 @@
-# DimBridge-Jupyter
+# Tear-Aware Brushing in DimBridge
 
-A Jupyter lab widget for interpreting visual patterns in dimensionality reduction plots
+This repository contains a work-in-progress prototype developed in the context of the TUM Chair of Algorithms project.
 
-Based on the work:
-[DimBridge: Interactive Explanation of Visual Patterns in Dimensionality Reductions with Predicate Logic
-](https://arxiv.org/abs/2404.07386)
+## What this prototype does
 
-## Example
-```
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+This version connects map-tearing diagnostics from the MNIST analysis workflow to DimBridge brushing interaction.
 
-%matplotlib inline
+Current functionality:
+- computes top tear pairs in the MNIST workflow
+- extracts tear endpoint points
+- passes tear-aware metadata into DimBridge
+- reports after brushing:
+  - brushed points
+  - tear points inside selection
+  - tear density
 
-import numpy as np
-import pandas as pd
-from umap import UMAP
+## Current status
 
-from dimbridge import Dimbridge
+This is a research prototype and still in progress.
+It is functional for end-to-end testing, but it is not yet a polished software release.
 
-plt.style.use("ggplot")
-plt.style.use("seaborn-v0_8-colorblind")
+## Repository contents
 
-n = int(1e4)
+- `notebooks/t-SNE_UMAP_MINST.ipynb` — working MNIST notebook
+- `docs/TUM_Chair_of_Algorithms_Tear_Aware_DimBridge_Short_Report.pdf` — short public-facing writeup
+- modified DimBridge code including tear-aware brushing logic
 
-## data
-R = 2
-P = 3
-eps = 0.5
-u = np.random.rand(n) * np.pi * 2
-v = np.random.rand(n) * np.pi * 2
+## Setup
 
-x = R * (np.cos(u / 2) * np.cos(v) - np.sin(u / 2) * np.sin(2 * v))
-y = R * (np.sin(u / 2) * np.cos(v) + np.cos(u / 2) * np.sin(2 * v))
-z = P * np.cos(u) * (1 + eps * np.sin(v))
-w = P * np.sin(u) * (1 + eps * np.sin(v))
-
-## construct pandas dataframe and compute UMAP
-df = pd.DataFrame(dict(x1=x, x2=y, x3=z, x4=w))
-# xy = UMAP(n_neighbors=50, min_dist=0.3).fit_transform(df.to_numpy())
-xy = np.c_[u, v]
-
-## validate UMAP
-plt.figure(figsize=[3, 3])
-plt.scatter(xy[:, 0], xy[:, 1], s=1)
-plt.axis("equal")
-plt.show()
-
-dimbridge = Dimbridge(
-    data=df,
-    x=xy[:, 0],
-    y=xy[:, 1],
-    s=4,  # projection plot mark size
-    splom_s=1,
-    predicate_mode="data extent",  # "data extent", "predicate regression"
-    brush_mode="single",  # 'single', "contrastive", "curve",
-)
-dimbridge
-```
-See details in [example.ipynb](./example.ipynb)
-
-
-## Installation
-
-- install jupyter lab: [[JupyterLab]](https://jupyter.org/install)
-
-- Install DimBridge
-
-```sh
-pip install dimbridge
-```
-
-- Enable widgets extension
-jupyter labextension enable widgetsnbextension
-
-## Development installation
-
-Create a virtual environment. Rather than using pip, install the dimbridge under this repo in *editable* mode with the
- development dependencies:
-
-```sh
+```bash
+git clone -b tear-aware-brushing https://github.com/Nawaf-TBE/dimbridge-jupyter.git
+cd dimbridge-jupyter
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-You then need to install the JavaScript dependencies and keep the development server running. 
-```sh
 npm install
-npm run dev
-```
-This will bundle the JS code and monitor edits in JS code to keep the dev version of the widget updated
+npm run build
+jupyter lab
+How to run
+Open JupyterLab
+Open notebooks/t-SNE_UMAP_MINST.ipynb
+Run the notebook cells in order
+Open the DimBridge widget
+Brush regions in the projection view
+Inspect the browser console for tear-aware output
+Expected console output
 
-Open `example.ipynb` in JupyterLab, VS Code, or your favorite editor to start developing. 
-Changes made in `js/` will be reflected in the notebook.
+The current prototype reports:
+
+Brushed points
+Tear points inside selection
+Tear density
+Tear rows
+Notes
+The current prototype has been validated on the MNIST workflow
+The tear-aware logic is integrated into the DimBridge brushing flow
+The implementation is intended for testing and research discussion
