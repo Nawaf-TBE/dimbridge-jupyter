@@ -37,42 +37,57 @@ export default class ProjectionView {
     constructor(
         data,
         {
-            x, //array of x coordinates for the DR projection
+            x,
             y,
             c,
             s,
             predicate_engine,
             predicate_mode = "data extent",
             brush_mode = "single",
+            tear_indices = [],
         } = {},
         model,
         controller,
         config,
     ) {
-        /*
-    - Takes projection coordinates and reorder it
-    - Knows hwo to color points within it
-    - Returns brushed data points
-    - For now (maybe move to somewhere else in the future), its brush also ask backend for predicates and retain that knowledge of predicates
-  */
         console.log("new ProjectionView");
+
         this.data = data;
-        this.model = model; // the python model
+        this.model = model;
         this.x = x;
         this.y = y;
-
-        this.s = s; //size
-        this.c = c; //color
+        this.s = s;
+        this.c = c;
 
         this.controller = controller;
         this.config = config;
         this.attributes = Object.keys(data[0]);
+
+        // === TEAR-AWARE DEBUG CHECK ===
+        console.log("[DimBridge tear-aware] first data row:", this.data[0]);
+
+        console.log(
+            "[DimBridge tear-aware] tear column check:",
+            this.data.filter((d) => Number(d.tear_flag) === 1).length,
+            "out of",
+            this.data.length,
+        );
+
+        // === TEAR-AWARE SETUP ===
+        this.tear_indices = tear_indices || [];
+        this.tear_index_set = new Set(this.tear_indices.map((d) => Number(d)));
+
+        console.log(
+            "[DimBridge tear-aware] tear_indices loaded:",
+            this.tear_indices.length,
+        );
 
         this.brush_cf = this.init_brush_crossfilter(data, this.attributes);
         this.predicate_cf = this.init_predicate_crossfilter(
             data,
             this.attributes,
         );
+
         this.node = this.init_node();
 
         this.draw();
@@ -81,7 +96,7 @@ export default class ProjectionView {
         this.predicate_engine = predicate_engine;
         this.set_predicate_callback();
 
-        this.predicate_mode = this.predicate_engine.mode; // TODO"predicate regression"
+        this.predicate_mode = this.predicate_engine.mode;
         this.brush_mode = brush_mode;
 
         return this;
@@ -91,34 +106,38 @@ export default class ProjectionView {
         this.model.on("change:predicates", (event, data) => {
             let {predicates, qualities} = data;
             console.log("PREDICATES", predicates);
-            //find union of predicate attributes in response.predicates
+
             let attributes_union = d3
                 .groups(predicates.flat(), (d) => d.attribute)
                 .map((d) => d[0]);
-            // set predicates to be an array of {attr_name:interval} objects, indexed by brush time
+
             predicates = predicates.map((predicate_t) => {
                 let key_value_pairs = predicate_t.map((p) => [
                     p.attribute,
                     p.interval,
                 ]);
+
                 let predicate = Object.fromEntries(key_value_pairs);
+
                 for (let attr of attributes_union) {
                     if (predicate[attr] === undefined) {
                         predicate[attr] = this.predicate_engine.extent[attr];
                     }
                 }
+
                 return predicate;
             });
-            //update plots
+
             if (predicates !== undefined && predicates.length >= 1) {
-                //Color scatter plot points by false positives, false negatives, etc.
                 let last_predicate = predicates[predicates.length - 1];
+
                 set_selected(
                     this.data,
                     this.sample_brush_history,
                     this.brush_cf,
                     this.brush_cf_dimensions,
                 );
+
                 set_pred(
                     this.data,
                     last_predicate,
@@ -126,64 +145,53 @@ export default class ProjectionView {
                     this.predicate_cf,
                     this.predicate_cf_dimensions,
                 );
+
                 if (this.n_boxes == 1) {
-                    if (this.predicate_mode === "data extent") {
-                        update_point_style_gl(this.sca, "confusion");
-                    } else {
-                        //color points by false netagivity, false postivity, etc.
-                        update_point_style_gl(this.sca, "confusion");
-                    }
+                    update_point_style_gl(this.sca, "confusion");
                 } else if (this.n_boxes == 2) {
-                    //color two sets of points by 2 brush boxes
                     update_point_style_gl(this.sca, "contrastive");
                 } else {
-                    //highligh all selected points by brush curve
                     update_point_style_gl(this.sca, "brush");
                 }
-                //inform other views
+
                 this.controller.on_projection_view_change(predicates);
             }
+        });
+
+        this.model.on("change:tear_indices", (event, data) => {
+            this.tear_indices = data.tear_indices || [];
+            this.tear_index_set = new Set(this.tear_indices.map((d) => Number(d)));
+
+            console.log(
+                "[DimBridge tear-aware] received tear_indices:",
+                this.tear_indices.length,
+            );
         });
     }
 
     init_brush_crossfilter(data, attributes) {
-        //Take all data and an awway of attribute strings
-        //Returns
-        //this.brush_cf_dimensions - an object with keys being attributes,
-        //and values beinging the corresponding crossfilter dimension objects
-        let cf_attributes = attributes.slice();
         let cf = crossfilter(data);
-        // let cf_dimensions = cf_attributes.map((attr) =>
-        // cf.dimension((d) => d[attr]),
-        // );
-        // cf_attributes.push("x", "y");
-        // cf_dimensions.push(
-        // cf.dimension((d, i) => this.x[i]),
-        // cf.dimension((d, i) => this.y[i]),
-        // );
-        // this.brush_cf_dimensions = Object.fromEntries(
-        //     zip(cf_attributes, cf_dimensions),
-        // );
+
         this.brush_cf_dimensions = {
             x: cf.dimension((d, i) => this.x[i]),
             y: cf.dimension((d, i) => this.y[i]),
         };
+
         return cf;
     }
 
     init_predicate_crossfilter(data, attributes) {
-        //Take all data and an awway of attribute strings
-        //Returns
-        //this.brush_cf_dimensions - an object with keys being attributes,
-        //and values beinging the corresponding crossfilter dimension objects
         let cf_attributes = attributes.slice();
         let cf = crossfilter(data);
+
         let cf_dimensions = cf_attributes.map((attr) =>
             cf.dimension((d) => d[attr]),
         );
+
         this.predicate_cf_dimensions = Object.fromEntries(
             zip(cf_attributes, cf_dimensions),
         );
+
         return cf;
     }
 
@@ -191,12 +199,9 @@ export default class ProjectionView {
         let {width, scatter_width, scatter_height, font_size, scatter_padding} =
             this.config;
 
-        //layout configs
-        // width measures include margins assigned to frame
-        this.plot_width = width * scatter_width; //width of main scatter plot and SPLOM
-        this.plot_height = width * scatter_height + 2.6 * font_size; // "+ 2.6 * fs" makes sure the scatter plot is squared
+        this.plot_width = width * scatter_width;
+        this.plot_height = width * scatter_height + 2.6 * font_size;
 
-        //paddings controls how much space we give the scatter plot within the frame.
         this.padding_left = scatter_padding;
         this.padding_right = scatter_padding;
         this.padding_bottom = scatter_padding;
@@ -204,16 +209,15 @@ export default class ProjectionView {
 
         this.fancy_frame = d3
             .create("svg")
-            .attr("width", this.plot_width) //give enough margin for frame shadow
+            .attr("width", this.plot_width)
             .attr("height", this.plot_height)
             .style("overflow", "visible");
 
         let return_node = d3.create("div").node();
         return_node.appendChild(this.fancy_frame.node());
-        // let return_node = this.fancy_frame.node();
-        // set_value(return_node, {}); //initial empty value
 
         this.projection_g = this.fancy_frame.append("g");
+
         make_frame(
             this.projection_g,
             0,
@@ -224,17 +228,16 @@ export default class ProjectionView {
             font_size,
             true,
         );
+
         return return_node;
     }
 
     draw() {
         let data = this.data;
-        // sc = (d, i) => d3.schemeCategory10[0];
         let sc = (d, i) => this.c[i];
 
-        // let style = get_point_style("selection");
-        // let sc = (d, i) => style(d, i).fill;
         console.log(this.node, data, this.x, this.y);
+
         this.sca = scatter_gl(d3.select(this.node), data, {
             x: (d, i) => this.x[i],
             y: (d, i) => this.y[i],
@@ -248,30 +251,30 @@ export default class ProjectionView {
             padding_top: this.padding_top,
             scales: {sc},
             is_square_scale: true,
-
             dpi_scale: 2.0,
-
             xticks: this.config.xticks,
             yticks: this.config.yticks,
         });
-        this.sca.overlay.selectAll(".tick text").remove(); // remove tick marks as dim-reduction axes are arbitrary
+
+        this.sca.overlay.selectAll(".tick text").remove();
         define_arrowhead(this.sca.overlay);
+
         return this.sca;
     }
 
     init_brush() {
-        //BRUSH
         this.n_boxes = 1;
         this.full_brush_history = [];
         this.sample_brush_history = [];
-        this.g_brush = this.sca.overlay.append("g").attr("class", "brush");
-        this.g_brush_path = this.sca.overlay.append("g"); // arrow drawn for contrastive and curve brush
 
-        //bounding box of the plot rectangle in the svg, in pixels
+        this.g_brush = this.sca.overlay.append("g").attr("class", "brush");
+        this.g_brush_path = this.sca.overlay.append("g");
+
         let plot_extent_x = [
             this.padding_left,
             this.plot_width - this.padding_right,
         ];
+
         let plot_extent_y = [
             this.padding_top,
             this.plot_height - this.padding_bottom,
@@ -288,9 +291,8 @@ export default class ProjectionView {
             .on("end", (event) => this.brush_end(event));
 
         this.g_brush.call(brush);
-        this.g_brush //remove brush UI stroke
-            .select("rect.selection")
-            .attr("stroke", "none");
+
+        this.g_brush.select("rect.selection").attr("stroke", "none");
 
         return brush;
     }
@@ -299,21 +301,16 @@ export default class ProjectionView {
         this.full_brush_history = [];
         clear_selected(this.data);
 
-        //clear all cross filters
         for (let dimension of Object.values(this.brush_cf_dimensions)) {
             dimension.filterAll();
         }
 
-        // reveal brush bounding box
         this.g_brush.selectAll(".selection").attr("display", null);
 
         if (event.mode === "handle") {
-            //brush resized, single predicate mode
             this.n_boxes = 1;
             this.g_brush_path.call(clear_path);
         } else if (event.mode === "drag") {
-            //brush drag=>contrastive/multiple predicates mode
-            //set n_boxes based on brush mode
             if (this.brush_mode == "single") {
                 this.n_boxes = 1;
             } else if (this.brush_mode == "contrastive") {
@@ -322,29 +319,29 @@ export default class ProjectionView {
                 this.n_boxes = 12;
             }
         }
+
         this.controller.on_projection_view_brush_start();
     }
 
     async brushed(event) {
         console.log("brushed n_boxes:", this.n_boxes);
+
         if (this.n_boxes > 1 && event.mode !== "drag") {
             return;
         }
 
-        //grab selection
         let brushed_region = this.get_brushed_region(
             event.selection,
             this.sca.scales.sx,
             this.sca.scales.sy,
         );
-        //update brush history
+
         this.sample_brush_history = update_brush_history(
             this.full_brush_history,
             brushed_region,
             this.n_boxes,
         );
 
-        //draw fancy brush stroke (arrow, and shaded stroke)
         if (this.n_boxes == 2) {
             this.g_brush_path.call(draw_path, this.sample_brush_history, {
                 size: 0,
@@ -357,7 +354,6 @@ export default class ProjectionView {
             });
         }
 
-        //draw boxes in the main scatter plot
         draw_boxes(
             this.sca,
             this.sample_brush_history.map((b) => ({
@@ -367,25 +363,22 @@ export default class ProjectionView {
                 y1: b.y_extent[1],
             })),
         );
-        //raise the drawn brush rectangle on top
+
         this.g_brush.raise();
 
-        //eager draw: in single brush, draw highlights on splom immediately
         if (this.predicate_mode === "data extent") {
-            //compute predicates based on selected data
-            let n_brushes = this.full_brush_history.length;
             let predicates = this.predicate_engine.compute_predicates(
                 this.sample_brush_history,
             );
 
             if (this.n_boxes == 1) {
-                //update data - the d.selected and d.brushed attribute base on brush
                 set_selected(
                     this.data,
                     this.sample_brush_history,
                     this.brush_cf,
                     this.brush_cf_dimensions,
                 );
+
                 set_pred(
                     this.data,
                     predicates[predicates.length - 1],
@@ -393,12 +386,14 @@ export default class ProjectionView {
                     this.predicate_cf,
                     this.predicate_cf_dimensions,
                 );
+
                 set_brushed(
                     this.data,
                     this.sample_brush_history,
                     this.brush_cf,
                     this.brush_cf_dimensions,
                 );
+
                 update_point_style_gl(this.sca, "confusion");
             } else if (this.n_boxes == 2) {
                 set_selected_2(
@@ -407,12 +402,14 @@ export default class ProjectionView {
                     this.brush_cf,
                     this.brush_cf_dimensions,
                 );
+
                 set_brushed(
                     this.data,
                     this.sample_brush_history,
                     this.brush_cf,
                     this.brush_cf_dimensions,
                 );
+
                 update_point_style_gl(this.sca, "contrastive");
             } else {
                 set_brushed(
@@ -421,9 +418,10 @@ export default class ProjectionView {
                     this.brush_cf,
                     this.brush_cf_dimensions,
                 );
+
                 update_point_style_gl(this.sca, "brush");
             }
-            //update other views
+
             this.controller.on_projection_view_change(
                 predicates,
                 this.data.length,
@@ -432,8 +430,6 @@ export default class ProjectionView {
     }
 
     async brush_end(event) {
-        //sync with backend
-        //dragging brushed region
         if (this.n_boxes == 1) {
             set_selected(
                 this.data,
@@ -441,10 +437,7 @@ export default class ProjectionView {
                 this.brush_cf,
                 this.brush_cf_dimensions,
             );
-            // let selected = this.brush_cf.allFiltered().map((d) => d.index);
-            // let selected = this.data.map((d) => d.selected);
         } else if (this.n_boxes == 2) {
-            //annotate brush-selected data by .first_brush and .second_brush
             set_selected_2(
                 this.data,
                 this.sample_brush_history,
@@ -452,7 +445,7 @@ export default class ProjectionView {
                 this.brush_cf_dimensions,
             );
         }
-        //update data - the d.selected and d.brushed attribute base on brush
+
         set_brushed(
             this.data,
             this.sample_brush_history,
@@ -460,46 +453,78 @@ export default class ProjectionView {
             this.brush_cf_dimensions,
         );
 
-        if (event.selection === null) {
-            // remove brush bounding boxes (bboxes) after brush cancelled
-            this.sca.overlay.selectAll(".bbox").remove();
+        // === TEAR-AWARE LOGIC ===
+        // Count brushed points directly from the final brush-box coordinates.
+        let brushed_points = this.data.filter((d, i) => {
+            return this.sample_brush_history.some((box) => {
+                let px = this.x[i];
+                let py = this.y[i];
 
-            //when brush get cleared, clear data selection and crossfilter
-            // this.brush_cf_dimensions["x"].filterAll();
-            // this.brush_cf_dimensions["y"].filterAll();
-            // clear_selected(this.data);
-            //redraw
-            // let sc = (d) => d3.schemeCategory10[0];
-            // this.sca.recolor(sc, {depth: depth_func("selection")});
+                let x0 = Math.min(box.x_extent[0], box.x_extent[1]);
+                let x1 = Math.max(box.x_extent[0], box.x_extent[1]);
+                let y0 = Math.min(box.y_extent[0], box.y_extent[1]);
+                let y1 = Math.max(box.y_extent[0], box.y_extent[1]);
+
+                return px >= x0 && px <= x1 && py >= y0 && py <= y1;
+            });
+        });
+
+        let brushed_tear_points = brushed_points.filter((d) => {
+            return Number(d.tear_flag) === 1;
+        });
+
+        let tear_count = brushed_tear_points.length;
+        let ratio =
+            brushed_points.length > 0 ? tear_count / brushed_points.length : 0;
+
+        console.log(
+            "[DimBridge tear-aware] Brushed points:",
+            brushed_points.length,
+        );
+
+        console.log(
+            "[DimBridge tear-aware] Tear points inside selection:",
+            tear_count,
+        );
+
+        console.log("[DimBridge tear-aware] Tear density:", ratio);
+
+        console.log(
+            "[DimBridge tear-aware] Tear rows:",
+            brushed_tear_points.map((d) => this.data.indexOf(d)),
+        );
+
+        if (event.selection === null) {
+            this.sca.overlay.selectAll(".bbox").remove();
             return;
         }
 
-        // optionally, remove brush bounding boxes (bboxes) after brush end (e.g, mouse release)
         this.sca.overlay.selectAll(".bbox").remove();
 
-        // In contrastive or curve mode (n_boxes > 1),
-        // if the brush is resized rather than dragged, do nothing.
         if (this.n_boxes > 1 && event.mode !== "drag") {
             return;
         } else if (this.n_boxes > 1 && event.mode === "drag") {
-            //dragging brushed region
-            //hide brush
             this.g_brush.selectAll(".selection").attr("display", "none");
         }
-        //compute predicates based on selected data points
+
         this.predicate_engine.compute_predicates(this.sample_brush_history);
     }
 
     get_brushed_region(selection, sx, sy) {
         let [[x0, y0], [x1, y1]] = selection;
+
         let cx = (x0 + x1) / 2;
         let cy = (y0 + y1) / 2;
+
         let brush_size = 1.2 * Math.sqrt(Math.abs((x0 - x1) * (y0 - y1)));
+
         x0 = sx.invert(x0);
         x1 = sx.invert(x1);
         y0 = sy.invert(y0);
         y1 = sy.invert(y1);
+
         [y0, y1] = [Math.min(y0, y1), Math.max(y0, y1)];
+
         return {x0, x1, y0, y1, cx, cy, brush_size};
     }
 }
