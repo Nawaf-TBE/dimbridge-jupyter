@@ -22,7 +22,7 @@ It is functional for end-to-end testing, but it is not yet a polished software r
 
 ## Repository contents
 
-- `notebooks/t-SNE_UMAP_MINST.ipynb` — working MNIST notebook
+- `notebooks/t-SNE_UMAP_MNIST_P.ipynb` — working MNIST notebook
 - `docs/TUM_Chair_of_Algorithms_Tear_Aware_DimBridge_Short_Report.pdf` — short public-facing writeup
 - modified DimBridge code including tear-aware brushing logic
 
@@ -42,7 +42,7 @@ Run the following commands:
 ## How to run
 
 1. Open JupyterLab.
-2. Open `notebooks/t-SNE_UMAP_MINST.ipynb`.
+2. Open `notebooks/t-SNE_UMAP_MNIST_P.ipynb`.
 3. Run the notebook cells in order.
 4. Open the DimBridge widget.
 5. Brush regions in the projection view.
